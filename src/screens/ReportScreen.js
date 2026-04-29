@@ -36,6 +36,18 @@ const formatCurrency = (value) => {
   return `${amount.toLocaleString('fr-FR')} $`;
 };
 
+const formatPercent = (value) => {
+  const percent = Number(value ?? 0);
+
+  if (Number.isNaN(percent)) {
+    return '0 %';
+  }
+
+  return `${percent.toLocaleString('fr-FR', {
+    maximumFractionDigits: 1,
+  })} %`;
+};
+
 const formatMonthLabel = (value) => {
   if (!value) {
     return 'Mois en cours';
@@ -75,6 +87,114 @@ const getCategoryLabel = (value) => {
   }
 
   return String(value);
+};
+
+const getUserTotalName = (item, index) => {
+  const user = item?.user || item?.utilisateur || item?.created_by || item?.owner || null;
+  const name = pickFirstDefined(
+    item?.name,
+    item?.fullname,
+    item?.full_name,
+    item?.username,
+    item?.nom,
+    item?.utilisateur_nom,
+    item?.user_name,
+    user?.name,
+    user?.fullname,
+    user?.full_name,
+    user?.username,
+    user?.nom,
+    null,
+  );
+
+  return name ? String(name) : `Utilisateur ${index + 1}`;
+};
+
+const getUserTotalAmount = (item) => {
+  if (typeof item === 'number' || typeof item === 'string') {
+    return item;
+  }
+
+  return pickFirstDefined(
+    item?.total_consumed,
+    item?.total_consomme,
+    item?.total_consommé,
+    item?.total_used,
+    item?.used_total,
+    item?.total,
+    item?.amount,
+    item?.montant,
+    item?.somme,
+    0,
+  );
+};
+
+const getUserTotalPercentage = (item) => {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+
+  return pickFirstDefined(
+    item?.percentage,
+    item?.percent,
+    item?.pourcentage,
+    item?.taux,
+    null,
+  );
+};
+
+const normalizeUserTotals = (value) => {
+  if (!value) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item, index) => ({
+      name: getUserTotalName(item, index),
+      amount: Number(getUserTotalAmount(item)) || 0,
+    }));
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value).map(([name, amount], index) => {
+      if (amount && typeof amount === 'object') {
+        return {
+          name: getUserTotalName({ name, ...amount }, index),
+          amount: Number(getUserTotalAmount(amount)) || 0,
+        };
+      }
+
+      return {
+        name: String(name),
+        amount: Number(amount) || 0,
+      };
+    });
+  }
+
+  return [];
+};
+
+const normalizeTopConsumer = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0 ? normalizeTopConsumer(value[0]) : null;
+  }
+
+  if (typeof value === 'object') {
+    return {
+      name: getUserTotalName(value, 0),
+      amount: Number(getUserTotalAmount(value)) || 0,
+      percentage: getUserTotalPercentage(value),
+    };
+  }
+
+  return {
+    name: String(value),
+    amount: 0,
+  };
 };
 
 const normalizeReportResponse = (response) => {
@@ -151,6 +271,14 @@ const normalizeReportResponse = (response) => {
     payload?.insight ||
     payload?.commentary ||
     null;
+  const userTotals = normalizeUserTotals(payload?.total_consomme_utilisateur);
+  const topConsumer = normalizeTopConsumer(payload?.utilisateur_plus_grand_consommateur);
+  const topConsumerPercentage = topConsumer
+    ? Number(pickFirstDefined(
+        topConsumer.percentage,
+        Number(initialBudget) > 0 ? (Number(topConsumer.amount) / Number(initialBudget)) * 100 : 0,
+      )) || 0
+    : 0;
 
   const balanceTrend = Number(finalBalance) >= 0 ? 'Stable' : 'Alerte';
   const netFlow = Number(incomes) - Number(expenses);
@@ -171,6 +299,13 @@ const normalizeReportResponse = (response) => {
     netFlow: Number(netFlow) || 0,
     monthlyBudgetOverrun,
     budgetUsageRate: Number(budgetUsageRate) || 0,
+    userTotals,
+    topConsumer: topConsumer
+      ? {
+          ...topConsumer,
+          percentage: topConsumerPercentage,
+        }
+      : null,
   };
 };
 
@@ -194,6 +329,8 @@ export default function ReportScreen({ navigation }) {
     netFlow: 0,
     monthlyBudgetOverrun: 0,
     budgetUsageRate: 0,
+    userTotals: [],
+    topConsumer: null,
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -273,7 +410,10 @@ export default function ReportScreen({ navigation }) {
     report.topExpenseCategory
       ? `Poste principal: ${report.topExpenseCategory}.`
       : 'Poste principal non renseigne pour cette periode.',
-  ];
+    report.topConsumer
+      ? `Plus grand consommateur du mois: ${report.topConsumer.name} avec ${formatCurrency(report.topConsumer.amount)} (${formatPercent(report.topConsumer.percentage)}).`
+      : null,
+  ].filter(Boolean);
 
   // console.log(report.topExpenseCategory.top_expense_category)
   return (
@@ -364,6 +504,26 @@ export default function ReportScreen({ navigation }) {
               )}
             </View>
           ))}
+        </View>
+
+        <View style={styles.detailCard}>
+          <Text style={styles.detailTitle}>Total utilise par utilisateur</Text>
+
+          {isLoading ? (
+            <>
+              <SkeletonBlock light style={styles.skeletonDetailLine} />
+              <SkeletonBlock light style={styles.skeletonDetailLineShort} />
+            </>
+          ) : report.userTotals.length > 0 ? (
+            report.userTotals.map((item) => (
+              <View key={`${item.name}-${item.amount}`} style={styles.userTotalRow}>
+                <Text style={styles.userTotalName}>{item.name}</Text>
+                <Text style={styles.userTotalAmount}>{formatCurrency(item.amount)}</Text>
+              </View>
+            ))
+          ) : (
+            <Text style={styles.detailText}>Aucun total utilisateur renseigne pour cette periode.</Text>
+          )}
         </View>
 
         <View style={styles.detailCard}>
@@ -542,6 +702,29 @@ const styles = StyleSheet.create({
   detailTitle: {
     color: '#F0FAF9',
     fontSize: 18,
+    fontWeight: '800',
+    fontFamily: FONT_HEADING,
+  },
+  userTotalRow: {
+    marginTop: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.1)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  userTotalName: {
+    flex: 1,
+    paddingRight: 12,
+    color: '#E5F3F1',
+    fontSize: 14,
+    fontWeight: '700',
+    fontFamily: FONT_HEADING,
+  },
+  userTotalAmount: {
+    color: '#F0FAF9',
+    fontSize: 15,
     fontWeight: '800',
     fontFamily: FONT_HEADING,
   },

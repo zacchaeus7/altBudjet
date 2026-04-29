@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import API from '../apis/API';
+import LocalStorage from '../storage/LocalStorage';
 import { FONT_BODY, FONT_DISPLAY, FONT_HEADING } from '../theme/typography';
 
 const escapeHtml = (value) => {
@@ -185,6 +186,48 @@ const getActivityActor = (item) => {
     item?.done_by ||
     null
   );
+};
+
+const getActivityActorId = (item) => {
+  return (
+    item?.user?.id ||
+    item?.utilisateur?.id ||
+    item?.author?.id ||
+    item?.created_by_user?.id ||
+    item?.createdByUser?.id ||
+    item?.cashier?.id ||
+    item?.caissier?.id ||
+    item?.user_id ||
+    item?.utilisateur_id ||
+    item?.author_id ||
+    item?.created_by ||
+    item?.created_by_id ||
+    item?.createdBy ||
+    item?.createdById ||
+    item?.cashier_id ||
+    item?.caissier_id ||
+    null
+  );
+};
+
+const getUserDisplayName = (user) => {
+  return (
+    user?.name ||
+    user?.fullname ||
+    user?.full_name ||
+    user?.username ||
+    user?.email ||
+    user?.user?.name ||
+    user?.user?.fullname ||
+    user?.user?.full_name ||
+    user?.user?.username ||
+    user?.user?.email ||
+    ''
+  );
+};
+
+const getUserId = (user) => {
+  return user?.id || user?.user_id || user?.user?.id || null;
 };
 
 const getActivityStatus = (item) => {
@@ -363,35 +406,56 @@ function LoadingActivityRow({ index }) {
   );
 }
 
+const buildSummaryFromActivities = (items) => {
+  const safeItems = Array.isArray(items) ? items : [];
+
+  return {
+    totalCount: safeItems.length,
+    expenseCount: safeItems.filter((item) => String(item?.type || '').toLowerCase() === 'expense').length,
+    incomeCount: safeItems.filter((item) => String(item?.type || '').toLowerCase() === 'income').length,
+  };
+};
+
 export default function ActivitiesScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const api = useMemo(() => new API(), []);
+  const localStorage = useMemo(() => new LocalStorage(), []);
   const [activities, setActivities] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
-  const [summary, setSummary] = useState({
-    totalCount: 0,
-    expenseCount: 0,
-    incomeCount: 0,
-  });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [showCurrentUserOnly, setShowCurrentUserOnly] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const selectedAccount = useMemo(() => {
     return accounts.find((item) => String(item?.id) === String(selectedAccountId)) || null;
   }, [accounts, selectedAccountId]);
+  const currentUserId = useMemo(() => getUserId(currentUser), [currentUser]);
+  const currentUserName = useMemo(() => getUserDisplayName(currentUser), [currentUser]);
   const visibleActivities = useMemo(() => {
-    if (!selectedAccountId) {
-      return activities;
-    }
+    return activities.filter((item) => {
+      const matchesAccount =
+        !selectedAccountId ||
+        String(getActivityAccountId(item) ?? '') === String(selectedAccountId);
 
-    return activities.filter((item) => String(getActivityAccountId(item) ?? '') === String(selectedAccountId));
-  }, [activities, selectedAccountId]);
+      const matchesCurrentUser =
+        !showCurrentUserOnly ||
+        (currentUserId && String(getActivityActorId(item) ?? '') === String(currentUserId)) ||
+        (!currentUserId &&
+          currentUserName &&
+          String(getActivityActor(item) || '').toLowerCase() === String(currentUserName).toLowerCase());
+
+      return matchesAccount && matchesCurrentUser;
+    });
+  }, [activities, currentUserId, currentUserName, selectedAccountId, showCurrentUserOnly]);
+  const visibleSummary = useMemo(() => buildSummaryFromActivities(visibleActivities), [visibleActivities]);
 
   const printableText = useMemo(() => {
     const lines = [
       'Rapport des activites mensuelles',
       selectedAccount ? `Compte filtre: ${selectedAccount.name}` : 'Tous les comptes',
-      `${summary.totalCount} mouvements ce mois`,
-      `${summary.expenseCount} depenses, ${summary.incomeCount} entrees`,
+      showCurrentUserOnly ? `Utilisateur filtre: ${currentUserName || 'Utilisateur connecte'}` : 'Tous les utilisateurs',
+      `${visibleSummary.totalCount} mouvements ce mois`,
+      `${visibleSummary.expenseCount} depenses, ${visibleSummary.incomeCount} entrees`,
       '',
     ];
 
@@ -425,7 +489,7 @@ export default function ActivitiesScreen({ navigation }) {
     });
 
     return lines.join('\n');
-  }, [selectedAccount, summary.expenseCount, summary.incomeCount, summary.totalCount, visibleActivities]);
+  }, [currentUserName, selectedAccount, showCurrentUserOnly, visibleActivities, visibleSummary]);
 
   const printableHtml = useMemo(() => {
     const rows = visibleActivities
@@ -504,8 +568,9 @@ export default function ActivitiesScreen({ navigation }) {
         <body>
           <h1>Rapport des activites mensuelles</h1>
           <p class="summary">${escapeHtml(selectedAccount ? `Compte filtre: ${selectedAccount.name}` : 'Tous les comptes')}</p>
-          <p class="summary">${escapeHtml(`${summary.totalCount} mouvements ce mois`)}</p>
-          <p class="summary">${escapeHtml(`${summary.expenseCount} depenses, ${summary.incomeCount} entrees`)}</p>
+          <p class="summary">${escapeHtml(showCurrentUserOnly ? `Utilisateur filtre: ${currentUserName || 'Utilisateur connecte'}` : 'Tous les utilisateurs')}</p>
+          <p class="summary">${escapeHtml(`${visibleSummary.totalCount} mouvements ce mois`)}</p>
+          <p class="summary">${escapeHtml(`${visibleSummary.expenseCount} depenses, ${visibleSummary.incomeCount} entrees`)}</p>
           <table>
             <thead>
               <tr>
@@ -520,7 +585,7 @@ export default function ActivitiesScreen({ navigation }) {
         </body>
       </html>
     `;
-  }, [selectedAccount, summary.expenseCount, summary.incomeCount, summary.totalCount, visibleActivities]);
+  }, [currentUserName, selectedAccount, showCurrentUserOnly, visibleActivities, visibleSummary]);
 
   const showError = (message) => {
     Alert.alert('Erreur', message);
@@ -617,18 +682,24 @@ export default function ActivitiesScreen({ navigation }) {
     return merged;
   };
 
-  const buildSummaryFromActivities = (items) => {
-    const safeItems = Array.isArray(items) ? items : [];
-
-    return {
-      totalCount: safeItems.length,
-      expenseCount: safeItems.filter((item) => String(item?.type || '').toLowerCase() === 'expense').length,
-      incomeCount: safeItems.filter((item) => String(item?.type || '').toLowerCase() === 'income').length,
-    };
-  };
-
   useEffect(() => {
     let isMounted = true;
+
+    const loadCurrentUser = async () => {
+      try {
+        const storedUser = await localStorage.getData('topLumUser');
+
+        if (!isMounted) {
+          return;
+        }
+
+        setCurrentUser(storedUser?.user || storedUser || null);
+      } catch (error) {
+        if (isMounted) {
+          setCurrentUser(null);
+        }
+      }
+    };
 
     const loadAccounts = async () => {
       try {
@@ -646,12 +717,13 @@ export default function ActivitiesScreen({ navigation }) {
       }
     };
 
+    loadCurrentUser();
     loadAccounts();
 
     return () => {
       isMounted = false;
     };
-  }, [api]);
+  }, [api, localStorage]);
 
   useEffect(() => {
     let isMounted = true;
@@ -695,7 +767,6 @@ export default function ActivitiesScreen({ navigation }) {
         }
 
         setActivities(mergedActivities);
-        setSummary(buildSummaryFromActivities(mergedActivities));
       } catch (error) {
         if (isMounted) {
           showError(extractApiErrorMessage(error));
@@ -745,12 +816,67 @@ export default function ActivitiesScreen({ navigation }) {
             </>
           ) : (
             <>
-              <Text style={styles.summaryValue}>{`${summary.totalCount} mouvements ce mois`}</Text>
+              <Text style={styles.summaryValue}>{`${visibleSummary.totalCount} mouvements ce mois`}</Text>
               <Text style={styles.summaryMeta}>
-                {`${summary.expenseCount} depenses, ${summary.incomeCount} entrees`}
+                {`${visibleSummary.expenseCount} depenses, ${visibleSummary.incomeCount} entrees`}
               </Text>
             </>
           )}
+        </View>
+
+        <View style={styles.filterCard}>
+          <View style={styles.filterHeader}>
+            <Text style={styles.filterLabel}>Filtrer par utilisateur</Text>
+            {showCurrentUserOnly ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                disabled={isLoading}
+                onPress={() => setShowCurrentUserOnly(false)}
+              >
+                <Text style={styles.filterReset}>Reinitialiser</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={styles.userFilterRow}>
+            <TouchableOpacity
+              activeOpacity={0.88}
+              disabled={isLoading}
+              onPress={() => setShowCurrentUserOnly(false)}
+              style={[
+                styles.filterChip,
+                !showCurrentUserOnly && styles.filterChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  !showCurrentUserOnly && styles.filterChipTextActive,
+                ]}
+              >
+                Tous
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.88}
+              disabled={isLoading}
+              onPress={() => setShowCurrentUserOnly(true)}
+              style={[
+                styles.filterChip,
+                showCurrentUserOnly && styles.filterChipActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  showCurrentUserOnly && styles.filterChipTextActive,
+                ]}
+              >
+                {currentUserName ? `Moi (${currentUserName})` : 'Moi'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {accounts.length > 0 ? (
@@ -835,7 +961,9 @@ export default function ActivitiesScreen({ navigation }) {
               </>
             ) : visibleActivities.length === 0 ? (
               <Text style={styles.emptyText}>
-                {selectedAccount
+                {showCurrentUserOnly
+                  ? 'Aucune activite disponible pour l utilisateur connecte ce mois.'
+                  : selectedAccount
                   ? 'Aucune activite disponible pour ce compte ce mois.'
                   : 'Aucune activite disponible pour ce mois.'}
               </Text>
@@ -992,6 +1120,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 2,
     paddingRight: 10,
+  },
+  userFilterRow: {
+    paddingTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
   },
   filterChip: {
     marginRight: 10,

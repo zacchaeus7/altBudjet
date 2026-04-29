@@ -647,6 +647,8 @@ export default function DashbordScreen({ navigation }) {
   const [notifications, setNotifications] = useState([]);
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(true);
   const [isMarkingAllNotifications, setIsMarkingAllNotifications] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isUserMenuVisible, setIsUserMenuVisible] = useState(false);
   const [dashboard, setDashboard] = useState({
     initialBudget: 0,
     balance: 0,
@@ -805,6 +807,47 @@ export default function DashbordScreen({ navigation }) {
     navigation.navigate('Activities');
   }, [markNotificationAsRead, navigation]);
 
+  const signOut = useCallback(async () => {
+    if (isSigningOut) {
+      return;
+    }
+
+    setIsSigningOut(true);
+
+    try {
+      await localStorage.deleteData('topLumUser');
+      await localStorage.deleteData('current_user_id');
+      await localStorage.deleteData('current_user');
+      setIsUserMenuVisible(false);
+
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'Login' }],
+      });
+    } catch (error) {
+      showError('Impossible de vous deconnecter. Reessayez.');
+    } finally {
+      setIsSigningOut(false);
+    }
+  }, [isSigningOut, localStorage, navigation]);
+
+  const handleSignOutPress = useCallback(() => {
+    setIsUserMenuVisible(false);
+
+    Alert.alert(
+      'Deconnexion',
+      'Voulez-vous vraiment vous deconnecter ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Se deconnecter',
+          style: 'destructive',
+          onPress: signOut,
+        },
+      ],
+    );
+  }, [signOut]);
+
   useFocusEffect(
     useCallback(() => {
       lowBalanceAlertShownRef.current = false;
@@ -821,7 +864,7 @@ export default function DashbordScreen({ navigation }) {
     ];
   }, [dashboard.balance, dashboard.expenses, dashboard.operationsCount]);
 
-  const heroStatus = dashboard.balance >= 0 ? 'Stable' : 'Alerte';
+  const heroStatus = dashboard.balance >= 0 ? 'S' : 'Alerte';
   const needsReplenishment = !isLoading && dashboard.balance < LOW_BALANCE_THRESHOLD;
   const shouldShowAccountsSection = isLoading || dashboard.accounts.length > 0;
   const shouldShowNotificationsSection = isNotificationsLoading || notifications.length > 0;
@@ -861,7 +904,7 @@ export default function DashbordScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
-          <View>
+          <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>Petite caisse</Text>
             <Text style={styles.title}>TABLEAU DE BORD</Text>
             <Text style={styles.subtitle}>
@@ -869,8 +912,46 @@ export default function DashbordScreen({ navigation }) {
             </Text>
           </View>
 
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{userInitials}</Text>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => setIsUserMenuVisible((visible) => !visible)}
+              style={styles.userButton}
+            >
+              <Text numberOfLines={1} style={styles.userButtonName}>
+                {userDisplayName || 'Utilisateur'}
+              </Text>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>{userInitials}</Text>
+              </View>
+            </TouchableOpacity>
+
+            {isUserMenuVisible ? (
+              <View style={styles.userMenu}>
+                <View style={styles.userMenuHeader}>
+                  <View style={styles.userMenuAvatar}>
+                    <Text style={styles.avatarText}>{userInitials}</Text>
+                  </View>
+                  <View style={styles.userMenuInfo}>
+                    <Text numberOfLines={1} style={styles.userMenuName}>
+                      {userDisplayName || 'Utilisateur connecte'}
+                    </Text>
+                    <Text style={styles.userMenuMeta}>Session active</Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  disabled={isSigningOut}
+                  onPress={handleSignOutPress}
+                  style={styles.userMenuSignOutButton}
+                >
+                  <Text style={styles.userMenuSignOutText}>
+                    {isSigningOut ? 'Deconnexion...' : 'Se deconnecter'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
         </View>
 
@@ -1339,6 +1420,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    zIndex: 4,
+  },
+  headerCopy: {
+    flex: 1,
+    paddingRight: 14,
+  },
+  headerActions: {
+    alignItems: 'flex-end',
+    position: 'relative',
+    zIndex: 6,
   },
   eyebrow: {
     color: '#9BC8C3',
@@ -1365,6 +1456,26 @@ const styles = StyleSheet.create({
     maxWidth: '92%',
     fontFamily: FONT_BODY,
   },
+  userButton: {
+    maxWidth: 160,
+    paddingLeft: 12,
+    paddingVertical: 6,
+    paddingRight: 6,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  userButtonName: {
+    flexShrink: 1,
+    marginRight: 8,
+    color: '#E8F6F4',
+    fontSize: 12,
+    fontWeight: '800',
+    fontFamily: FONT_HEADING,
+  },
   avatar: {
     width: 48,
     height: 48,
@@ -1379,6 +1490,66 @@ const styles = StyleSheet.create({
     color: '#F4FBFA',
     fontSize: 15,
     fontWeight: '800',
+  },
+  userMenu: {
+    position: 'absolute',
+    top: 62,
+    right: 0,
+    width: 250,
+    padding: 14,
+    borderRadius: 18,
+    backgroundColor: '#F6F8F7',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    shadowColor: '#04151E',
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  userMenuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#DDE8E5',
+  },
+  userMenuAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0F766E',
+  },
+  userMenuInfo: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  userMenuName: {
+    color: '#102A35',
+    fontSize: 14,
+    fontWeight: '800',
+    fontFamily: FONT_HEADING,
+  },
+  userMenuMeta: {
+    marginTop: 3,
+    color: '#60767D',
+    fontSize: 12,
+    fontFamily: FONT_BODY,
+  },
+  userMenuSignOutButton: {
+    marginTop: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#FCE9C8',
+  },
+  userMenuSignOutText: {
+    color: '#8A3E00',
+    fontSize: 13,
+    fontWeight: '800',
+    fontFamily: FONT_HEADING,
   },
   heroCard: {
     marginTop: 26,
